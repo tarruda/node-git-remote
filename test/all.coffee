@@ -202,3 +202,27 @@ suite 'smart protocol', ->
         done(new Error('Missing some verifications'))
       else
         done()
+
+
+  test 'fetch only the top commit', (done) ->
+    remaining = 1
+    fetch = @remote.fetch()
+    fetch.maxDepth = 1
+
+    fetch.on 'discover', (refs) ->
+      refs.master.want()
+      fetch.flush()
+
+    fetch.on 'fetched', (fetched) =>
+      remaining--
+      expect(fetched.master.serialize().getHash()).to.equal(
+        @c3.serialize().getHash())
+      treeShouldEqual(fetched.master.tree, @c3.tree)
+
+    fetch.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()
+
+    fetch._errStream.on 'data', (d) -> console.log(d.toString())

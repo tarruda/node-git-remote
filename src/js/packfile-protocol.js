@@ -117,6 +117,11 @@ function parseReceivingData(fetch) {
 
   fetch.state = 'receiving';
 
+  if (fetch.maxDepth > 0) {
+    sendPktLine(inStream, 'deepen ' + fetch.maxDepth.toString() + '\n');
+  }
+  inStream.write('00000000', 'utf8');
+
   receivingDataParser = binary().scan('acḱ', NACK).tap(function(parsed) {
     var done = false;
 
@@ -240,7 +245,6 @@ FetchDiscoveredRef.prototype.want = function() {
   this._fetch._wanted[this.sha1] = null;
 };
 
-
 function Fetch(inStream, outStream, errStream) {
   var _this = this;
 
@@ -258,20 +262,10 @@ function Fetch(inStream, outStream, errStream) {
 util.inherits(Fetch, events.EventEmitter);
 
 Fetch.prototype.flush = function() {
-  this._inStream.write('0000', 'utf8');
-
-  switch(this.state) {
-    case 'discovered':
-      if (this._wanted) {
-        this._inStream.write('0000', 'utf8');
-        parseReceivingData(this);
-      }
-      break;
-
-
-    default:
-      throw new Error('Invalid fetch state');
-  }
+  if (this.state === 'discovered' && this._wanted)
+    parseReceivingData(this);
+  else
+    this._inStream.write('0000', 'utf8');
 };
 
 exports.Fetch = Fetch;
