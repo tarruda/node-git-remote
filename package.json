@@ -15,7 +15,7 @@
     "remote"
   ],
   "dependencies": {
-    "git-core": "*",
+    "git-core": "git://github.com/tarruda/node-git-core.git#master",
     "binary": "*"
   },
   "devDependencies": {

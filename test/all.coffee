@@ -124,6 +124,32 @@ testObjects = ->
     message: 'Tag second commit'
   }
 
+blobShouldEqual = (b1, b2) ->
+  c1 = b1.contents
+  c2 = b2.contents
+  if typeof c1 == 'string'
+    c1 = new Buffer(c1)
+  c1 = c1.toString 'base64'
+  if typeof c2 == 'string'
+    c2 = new Buffer(c2)
+  c2 = c2.toString 'base64'
+  expect(c1).to.equal c2
+
+treeShouldEqual = (t1, t2) ->
+  for k, v of t1.children
+    if v instanceof Blob
+      blobShouldEqual(v, t2.children[k])
+    else if v instanceof Tree
+      treeShouldEqual(v, t2.children[k])
+    else
+      throw new Error('err')
+
+historyShouldEqual = (c1, c2) ->
+  expect(c1.serialize().getHash()).to.equal c2.serialize().getHash()
+  expect(c1.message).to.equal c2.message
+  treeShouldEqual(c1.tree, c2.tree)
+  for i in [0...c1.parents.length]
+    historyShouldEqual(c1.parents[i], c2.parents[i])
 
 suite 'smart protocol', ->
 
@@ -135,15 +161,44 @@ suite 'smart protocol', ->
     testObjects.call @
     # write objects to the repository
     writeGitGraph @path, @c3, 'master', =>
-      writeGitGraph @path, @tag, @tag.name, done
+      writeGitGraph @path, @tag, @tag.name, =>
+        @remote = new FileRemote path: @path
+        done()
 
   test 'reference discovery on fetch', (done) ->
-    remote = new FileRemote path: @path
-    remote.fetch (err, discovery) =>
-      refs = discovery.refs
+    remaining = 1
+    fetch = @remote.fetch()
+
+    fetch.on 'discover', (refs) =>
+      expect(Object.keys(refs).length).to.equal 3
       expect(refs.HEAD.sha1).to.equal @c3.serialize().getHash()
       expect(refs.master.sha1).to.equal @c3.serialize().getHash()
       expect(refs['v0.0.1'].sha1).to.equal @tag.serialize().getHash()
       expect(refs['v0.0.1'].peeled).to.equal @c2.serialize().getHash()
-      done()
+      remaining--
+      fetch.flush()
 
+    fetch.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()
+
+
+  test 'fetch all refs', (done) ->
+    remaining = 1
+    fetch = @remote.fetch()
+
+    fetch.on 'discover', (refs) ->
+      refs.master.want()
+      fetch.flush()
+
+    fetch.on 'fetched', (fetched) =>
+      remaining--
+      historyShouldEqual(fetched.master, @c3)
+
+    fetch.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()

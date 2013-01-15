@@ -1,4 +1,5 @@
 var spawn = require('child_process').spawn
+  , Stream = require('stream')
   , packfile = require('./packfile-protocol');
 
 function Remote(opts) {
@@ -8,24 +9,11 @@ function Remote(opts) {
   this.path = opts.path;
 }
 
-Remote.prototype.fetch = function(cb) {
-  var gitUpload = spawn('git-upload-pack', [this.path])
-    , discoveryParser = new packfile.FetchDiscoveryParser(gitUpload.stdout);
+Remote.prototype.fetch = function() {
+  var gitUpload = spawn('git-upload-pack', [this.path]);
 
-  discoveryParser.once('parsed', function(discovery) {
-    cb.call(discovery, null, discovery);
-    cb = null;
-  });
-
-  discoveryParser.once('error', function(err) {
-    cb.call(null, error);
-    cb = null;
-  });
-
-  gitUpload.once('exit', function(status) {
-    if (status !== 0 && cb !== null)
-      cb.call(null, err);
-  });
+  return new packfile.Fetch(gitUpload.stdin, gitUpload.stdout,
+                            gitUpload.stderr);
 };
 
 module.exports = Remote;
