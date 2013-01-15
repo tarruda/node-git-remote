@@ -7,37 +7,36 @@ var util = require('util')
   , PACK = new Buffer('PACK');
 
 
-function parseFetchDiscovery(fetch) {
-  var discoveryParser, capabilities
-    , inStream = fetch._inStream
-    , outStream = fetch._outStream
+function sendPktLine(inStream, data) {
+  var len, hexLen;
+
+  if (typeof data === 'string')
+    data = new Buffer(data, 'utf8');
+
+  len = data.length + 4;
+  hexLen = new Buffer([0, 0]);
+  hexLen.writeUInt16BE(len, 0);
+  hexLen = hexLen.toString('hex');
+  inStream.write(hexLen, 'utf8');
+  inStream.write(data);
+}
+
+
+function parseDiscovery(conversation) {
+  var discoveryParser, capabilities, head, refCls
+    , inStream = conversation._inStream
+    , outStream = conversation._outStream
     , refs = {};
 
-  fetch.state = 'discovering'
+  conversation.state = 'discovering'
+
+  if (conversation instanceof Push)
+    refCls = PushDiscoveryRef;
+  else
+    refCls = FetchDiscoveredRef;
+
   discoveryParser = binary().loop(function(end) {
 
-    /*
-    TODO: Fully implement
-    ABNF
-
-    advertised-refs  =  (no-refs / list-of-refs)
-                        flush-pkt
-
-    no-refs          =  PKT-LINE(zero-id SP "capabilities^{}"
-                        NUL capability-list LF)
-
-    list-of-refs     =  first-ref *other-ref
-    first-ref        =  PKT-LINE(obj-id SP refname
-                        NUL capability-list LF)
-
-    other-ref        =  PKT-LINE(other-tip / other-peeled)
-    other-tip        =  obj-id SP refname LF
-    other-peeled     =  obj-id SP refname "^{}" LF
-
-    capability-list  =  capability *(SP capability)
-    capability       =  1*(LC_ALPHA / DIGIT / "-" / "_")
-    LC_ALPHA         =  %x61-7A
-    */
     this.buffer('length', 4).tap(function(parsed) {
       var done = false
         , remaining = parseInt(parsed.length.toString(), 16);
@@ -61,17 +60,19 @@ function parseFetchDiscovery(fetch) {
               if (match = /refs\/(heads|tags)\/(.+)\s*$/.exec(refName)) {
                 refName = match[2];
                 if (/\^\{\}$/.test(match[2])) {
-                  refName = refName.slice(0, refName.length -3);
+                  refName = refName.slice(0, refName.length - 3);
                   if (refs[refName])
                     refs[refName].peeled = sha1;               
                 } else {
                   type = 'tags' ? 'tag' : 'branch';
-                  refs[refName] = new FetchDiscoveredRef(
-                    fetch, sha1, refName, type);
+                  refs[refName] = new refCls(
+                    conversation, sha1, refName, type);
+                  if (head === sha1) {
+                    refs['HEAD'] = refs[refName];
+                  }
                 }
               } else if (/HEAD/.test(refName)) {
-                refs['HEAD'] = new FetchDiscoveredRef(
-                  fetch, sha1, 'HEAD', 'HEAD');
+                head = sha1;
               }
             }
 
@@ -92,10 +93,10 @@ function parseFetchDiscovery(fetch) {
       if (done) {
         outStream.removeListener('data', onData);
         end();
-        fetch.refs = refs;
-        fetch._capabilities = capabilities;
-        fetch.state = 'discovered';
-        fetch.emit('discover', refs);
+        conversation.refs = refs;
+        conversation._capabilities = capabilities;
+        conversation.state = 'discovered';
+        conversation.emit('discover', refs);
       }
           
     });
@@ -108,7 +109,8 @@ function parseFetchDiscovery(fetch) {
   outStream.on('data', onData);
 }
 
-function parseReceivingData(fetch) {
+
+function parseFetchData(fetch) {
   var receivingDataParser, k, v
     , inStream = fetch._inStream
     , outStream = fetch._outStream
@@ -185,6 +187,7 @@ function parseReceivingData(fetch) {
   outStream.on('data', onData);
 }
 
+
 function fetchCapabilities(serverCapabilities) {
   var rv = [];
 
@@ -207,66 +210,73 @@ function fetchCapabilities(serverCapabilities) {
   return rv.join(' ');
 }
 
-function sendPktLine(inStream, data) {
-  var len, hexLen;
-
-  if (typeof data === 'string')
-    data = new Buffer(data, 'utf8');
-
-  len = data.length + 4;
-  hexLen = new Buffer([0, 0]);
-  hexLen.writeUInt16BE(len, 0);
-  hexLen = hexLen.toString('hex');
-  inStream.write(hexLen, 'utf8');
-  inStream.write(data);
-}
-
-function FetchDiscoveredRef(fetch, sha1, name, type) {
-  this._fetch = fetch;
-  this.sha1 = sha1;
-  this.name = name;
-  this.type = type;
-}
-
-FetchDiscoveredRef.prototype.want = function() {
-  var inStream = this._fetch._inStream;
-
-  if (!this._fetch._capabilitiesSent) {
-    sendPktLine(inStream, 'want ' + this.sha1 + ' ' + fetchCapabilities(
-      this._fetch._capabilities) + '\n');
-    this._fetch._capabilitiesSent = true;
-  } else {
-    sendPktLine(inStream, 'want ' + this.sha1 + '\n');
-  }
-
-  if (!this._fetch._wanted)
-    this._fetch._wanted = {};
-
-  this._fetch._wanted[this.sha1] = null;
-};
-
-function Fetch(inStream, outStream, errStream) {
+function Conversation(inStream, outStream, errStream) {
   var _this = this;
 
   this._inStream = inStream;
   this._outStream = outStream;
   this._errStream = errStream;
-  parseFetchDiscovery(this);
+  parseDiscovery(this, this instanceof Push);
 
   outStream.once('close', function() {
-    // do not emit end when fetching and leave that job to the 'fetched'
+    // do not emit 'end' when fetching and leave that job to the 'fetched'
     // event
     if (_this.state === 'discovered') _this.emit('end');
   });
 }
-util.inherits(Fetch, events.EventEmitter);
+util.inherits(Conversation, events.EventEmitter);
+
+
+function DiscoveredRef(conversation, sha1, name, type) {
+  this._conversation = conversation;
+  this.sha1 = sha1;
+  this.name = name;
+  this.type = type;
+}
+
+
+function FetchDiscoveredRef() {
+  this.constructor.super_.apply(this, arguments);
+}
+util.inherits(FetchDiscoveredRef, DiscoveredRef);
+
+FetchDiscoveredRef.prototype.want = function() {
+  var inStream = this._conversation._inStream;
+
+  if (!this._conversation._capabilitiesSent) {
+    sendPktLine(inStream, 'want ' + this.sha1 + ' ' + fetchCapabilities(
+      this._conversation._capabilities) + '\n');
+    this._conversation._capabilitiesSent = true;
+  } else {
+    sendPktLine(inStream, 'want ' + this.sha1 + '\n');
+  }
+
+  if (!this._conversation._wanted)
+    this._conversation._wanted = {};
+
+  this._conversation._wanted[this.sha1] = null;
+};
+
+
+function Fetch() {
+  this.constructor.super_.apply(this, arguments);
+}
+util.inherits(Fetch, Conversation);
 
 Fetch.prototype.flush = function() {
   if (this.state === 'discovered' && this._wanted)
-    parseReceivingData(this);
+    parseFetchData(this);
   else
     this._inStream.write('0000', 'utf8');
 };
 
+
+function Push() {
+  this.constructor.super_.apply(this, arguments);
+}
+util.inherits(Push, Conversation);
+
+
 exports.Fetch = Fetch;
+exports.Push = Push;
 

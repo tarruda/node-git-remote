@@ -171,7 +171,7 @@ suite 'smart protocol', ->
 
     fetch.on 'discover', (refs) =>
       expect(Object.keys(refs).length).to.equal 3
-      expect(refs.HEAD.sha1).to.equal @c3.serialize().getHash()
+      expect(refs.HEAD).to.equal refs.master
       expect(refs.master.sha1).to.equal @c3.serialize().getHash()
       expect(refs['v0.0.1'].sha1).to.equal @tag.serialize().getHash()
       expect(refs['v0.0.1'].peeled).to.equal @c2.serialize().getHash()
