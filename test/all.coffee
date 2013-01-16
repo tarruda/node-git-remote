@@ -483,13 +483,14 @@ historyShouldEqual = (c1, c2) ->
     historyShouldEqual(c1.parents[i], c2.parents[i])
 
 semaphore = wait()
-envsRemaining = 2
+envsRemaining = 1
 
+# file transport
 prepareTestEnv (repoPath, emptyRepoPath, obj) ->
   createSuite 'file', connect(repoPath), connect(emptyRepoPath), obj
   ack()
 
-# start a temporary git daemon
+# # git transport, start a temporary git daemon
 daemon = spawn 'git', ['daemon', '--base-path=/', '--export-all',
   '--enable=receive-pack']
 prepareTestEnv (repoPath, emptyRepoPath, obj) ->
@@ -498,11 +499,22 @@ prepareTestEnv (repoPath, emptyRepoPath, obj) ->
   createSuite 'git', connect(repoPath), connect(emptyRepoPath), obj,
     (cb) ->
       daemon.kill 'SIGKILL'
-      setTimeout(cb, 50)
+      cb()
+  ack()
+
+# ssh transport, need to append 'git-test.pub' contents to
+# authorized_keys and have a ssh server running(user also
+# needs to be 'tarruda')
+prepareTestEnv (repoPath, emptyRepoPath, obj) ->
+  repoPath = "tarruda@127.0.0.1:#{repoPath}"
+  emptyRepoPath = "tarruda@127.0.0.1:#{emptyRepoPath}"
+  opts =
+    key: fs.readFileSync path.join __dirname, 'git-test'
+  createSuite 'git', connect(repoPath, opts), connect(emptyRepoPath, opts),
+    obj
   ack()
 
 ack = ->
   envsRemaining--
   if !envsRemaining
     semaphore.resume()
-# file:// transport

@@ -1,5 +1,6 @@
 var FileRemote = require('./file-transport')
   , GitRemote = require('./git-transport')
+  , SSHRemote = require('./ssh-transport')
   , SSH_REL = /^\s*(.+?)@(.+?)\:(.+?)\s*$/i
   , SSH_ABS = /^\s*(?:ssh\:\/\/)(.+)@(.+?)\/(.+?)\s*$/i
   , GIT = /^\s*(?:git\:\/\/)(.+?)\/(.+?)\s*$/i
@@ -14,9 +15,15 @@ function connect(url, opts) {
   }
 
   if (match = SSH_REL.exec(url)) {
-    throw new Error('Not implemented');
+    remoteOpts.user = match[1];
+    remoteOpts.host = match[2];
+    remoteOpts.path = match[3];
+    return new SSHRemote(remoteOpts);
   } else if (match = SSH_ABS.exec(url)) {
-    throw new Error('Not implemented');
+    remoteOpts.user = match[1];
+    remoteOpts.host = match[2];
+    remoteOpts.path = '/' + match[3];
+    return new SSHRemote(remoteOpts);
   } else if (match = GIT.exec(url)) {
     remoteOpts.host = match[1];
     remoteOpts.path = match[2];

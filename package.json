@@ -16,6 +16,7 @@
   ],
   "dependencies": {
     "git-core": "git://github.com/tarruda/node-git-core.git#master",
+    "ssh2": "*",
     "binary": "*"
   },
   "devDependencies": {
