@@ -13,11 +13,14 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
   suite 'smart protocol ' + transport, ->
 
     suiteTeardown (done) ->
-      wrench.rmdirSyncRecursive(remote.path, true)
-      wrench.rmdirSyncRecursive(emptyRemote.path, true)
       if extraTeardown
-        extraTeardown(done)
+        extraTeardown ->
+          wrench.rmdirSyncRecursive('/' + remote.path, true)
+          wrench.rmdirSyncRecursive('/' + emptyRemote.path, true)
+          done()
       else
+        wrench.rmdirSyncRecursive(remote.path, true)
+        wrench.rmdirSyncRecursive(emptyRemote.path, true)
         done()
 
     test 'fetch reference discovery', (done) ->
@@ -470,7 +473,7 @@ treeShouldEqual = (t1, t2) ->
     else if v instanceof Tree
       treeShouldEqual(v, t2.children[k])
     else
-      throw new Error('err')
+      throw new Error 'err'
 
 historyShouldEqual = (c1, c2) ->
   expect(c1.serialize().getHash()).to.equal c2.serialize().getHash()
@@ -488,14 +491,14 @@ prepareTestEnv (repoPath, emptyRepoPath, obj) ->
 
 # start a temporary git daemon
 daemon = spawn 'git', ['daemon', '--base-path=/', '--export-all',
-  '--enable=receive-pack'], stdio: [null, 'ignore', 'ignore']
+  '--enable=receive-pack']
 prepareTestEnv (repoPath, emptyRepoPath, obj) ->
   repoPath = "git://127.0.0.1#{repoPath}"
   emptyRepoPath = "git://127.0.0.1#{emptyRepoPath}"
   createSuite 'git', connect(repoPath), connect(emptyRepoPath), obj,
-    (done) ->
+    (cb) ->
       daemon.kill 'SIGKILL'
-      done()
+      setTimeout(cb, 50)
   ack()
 
 ack = ->
