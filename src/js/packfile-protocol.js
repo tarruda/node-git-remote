@@ -434,4 +434,6 @@ Push.prototype.create = function(name, history) {
 
 exports.Fetch = Fetch;
 exports.Push = Push;
+exports.sendPktLine = sendPktLine;
+exports.NULL = NULL;
 

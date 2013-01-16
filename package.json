@@ -21,7 +21,7 @@
   "devDependencies": {
     "wrench": "*",
     "less": "*",
-    "mocha": "*",
+    "mocha": "git://github.com/tarruda/mocha.git#master",
     "chai": "*",
     "temp": "*",
     "glob": "*"

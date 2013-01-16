@@ -1,6 +1,7 @@
 runtestdir = \
        @ls $(1)/*.coffee | xargs \
-       ./node_modules/.bin/mocha --compilers coffee:coffee-script -u $(2) --colors
+       ./node_modules/.bin/mocha --compilers coffee:coffee-script -u $(2)\
+       --colors --timeout 5000
 
 test:
 	$(call runtestdir, "./test", "tdd")

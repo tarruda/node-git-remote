@@ -1,5 +1,4 @@
 var spawn = require('child_process').spawn
-  , Stream = require('stream')
   , packfile = require('./packfile-protocol');
 
 function Remote(opts) {

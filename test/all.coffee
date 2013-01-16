@@ -2,7 +2,6 @@ fs = require 'fs'
 path = require 'path'
 temp = require 'temp'
 zlib = require 'zlib'
-glob = require 'glob'
 wrench = require 'wrench'
 {spawn} = require 'child_process'
 {expect} = require 'chai'
@@ -10,27 +9,417 @@ wrench = require 'wrench'
 connect = require '../src/js'
 
 
-createGitRepo = (done) ->
-  temp.mkdir 'test-repo', (err, path) =>
-    @path = path
-    git = spawn 'git', ['init', '--bare', path]
+createSuite = (transport, remote, emptyRemote, obj) ->
+  suite 'smart protocol ' + transport, ->
+
+    suiteTeardown = ->
+      wrench.rmdirSyncRecursive(remote.path, true)
+      wrench.rmdirSyncRecursive(emptyRemote.path, true)
+
+    test 'fetch reference discovery', (done) ->
+      remaining = 1
+      fetch = remote.fetch()
+
+      fetch.on 'discover', (refs) =>
+        expect(Object.keys(refs).length).to.equal 3
+        expect(refs.HEAD).to.equal refs['heads/master']
+        expect(refs['heads/master'].sha1).to.equal obj.c3.serialize()
+          .getHash()
+        expect(refs['tags/v0.0.1'].sha1).to.equal obj.tag.serialize()
+          .getHash()
+        expect(refs['tags/v0.0.1'].peeled).to.equal obj.c2.serialize()
+          .getHash()
+        remaining--
+        fetch.flush()
+
+      fetch.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'fetch reference discovery on empty repo', (done) ->
+      remaining = 1
+      fetch = emptyRemote.fetch()
+      fetch.on 'discover', (refs) =>
+        expect(Object.keys(refs).length).to.equal 0
+        # can't fetch from an empty repo
+        expect(fetch._capabilities).to.equal undefined
+        remaining--
+        fetch.flush()
+
+      fetch.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'fetch all refs', (done) ->
+      remaining = 1
+      fetch = remote.fetch()
+
+      fetch.on 'discover', (refs) ->
+        refs['heads/master'].want()
+        fetch.flush()
+
+      fetch.on 'fetched', (fetched) =>
+        remaining--
+        historyShouldEqual(fetched['heads/master'], obj.c3)
+
+      fetch.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+
+    test 'fetch only the top commit', (done) ->
+      remaining = 1
+      fetch = remote.fetch()
+      fetch.maxDepth = 1
+
+      fetch.on 'discover', (refs) ->
+        refs['heads/master'].want()
+        fetch.flush()
+
+      fetch.on 'fetched', (fetched) =>
+        remaining--
+        expect(fetched['heads/master'].serialize().getHash()).to.equal(
+          obj.c3.serialize().getHash())
+        treeShouldEqual(fetched['heads/master'].tree, obj.c3.tree)
+
+      fetch.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+      fetch._errStream.on 'data', (d) -> console.log(d.toString())
+
+    test 'push reference discovery', (done) ->
+      remaining = 1
+      push = remote.push()
+
+      push.on 'discover', (refs) =>
+        expect(Object.keys(refs).length).to.equal 2
+        expect(refs['heads/master'].sha1).to.equal obj.c3.serialize()
+          .getHash()
+        expect(refs['tags/v0.0.1'].sha1).to.equal obj.tag.serialize()
+          .getHash()
+        remaining--
+        push.flush()
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'push to empty repo', (done) ->
+      remaining = 2
+      push = emptyRemote.push()
+      push.on 'discover', (refs) =>
+        expect(Object.keys(refs).length).to.equal 0
+        expect(push._capabilities).to.deep.equal [
+            'report-status'
+          , 'delete-refs'
+          , 'side-band-64k'
+          , 'quiet'
+          , 'ofs-delta'
+        ]
+        remaining--
+        push.create 'heads/master', obj.n2
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ok refs/heads/master'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'push to an existing branch', (done) ->
+      remaining = 1
+      push = remote.push()
+
+      push.on 'discover', (refs) =>
+        refs['heads/master'].update obj.n2
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ok refs/heads/master'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'push to a new branch', (done) ->
+      remaining = 1
+      push = remote.push()
+
+      push.on 'discover', (refs) =>
+        push.create 'heads/topic', obj.n2
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ok refs/heads/topic'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'create new branch from existing commits', (done) ->
+      # according to git docs, we need to send an empty packfile
+      # in this case, but it seems to work anyway
+      remaining = 1
+      push = remote.push()
+
+      push.on 'discover', (refs) =>
+        push.create 'heads/some-branch', obj.c2
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ok refs/heads/some-branch'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'delete current branch fail', (done) ->
+      # Not testing this code but good for documentation anyway
+      remaining = 1
+      push = remote.push()
+
+      push.on 'discover', (refs) =>
+        refs['heads/master'].del()
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ng refs/heads/master deletion of the current branch prohibited'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'delete tag', (done) ->
+      remaining = 1
+      push = remote.push()
+
+      push.on 'discover', (refs) =>
+        refs['tags/v0.0.1'].del()
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ok refs/tags/v0.0.1'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'delete two branches', (done) ->
+      remaining = 1
+      push = remote.push()
+
+      push.on 'discover', (refs) =>
+        refs['heads/some-branch'].del()
+        refs['heads/topic'].del()
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ok refs/heads/some-branch'
+          'ok refs/heads/topic'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+    test 'create two branches and update another', (done) ->
+      remaining = 1
+      push = remote.push()
+
+      push.on 'discover', (refs) =>
+        push.create 'heads/topic1', obj.n1
+        push.create 'heads/topic2', obj.n2
+        refs['heads/master'].update new Commit {
+            tree: new Tree {
+              'last-version.txt':
+                new Blob 'Single file in tree for new branch'
+            }
+            author:
+              name: 'Git User'
+              email: 'user@git.com'
+              date: new Date 3
+            message: 'New branch second commit'
+          }
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ok refs/heads/topic1'
+          'ok refs/heads/topic2'
+          'ok refs/heads/master'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
+
+
+prepareTestEnv = (cb) ->
+  createGitRepo (repoPath) ->
+    # populate the repository with some objects
+
+    d1 = new Date 1000000000
+    d2 = new Date 2000000000
+    d3 = new Date 3000000000
+    d4 = new Date 4000000000
+    str = ''
+    for i in [0...1000]
+      str += 'test content/test content2/test content3\n'
+    b1 = new Blob str
+    # this encode second blob as a delta of the first in packfiles
+    b2 = new Blob str + 'append'
+    b3 = new Blob 'subdir test content\n'
+    t1 = new Tree {
+      'file-under-tree': b3
+    }
+    t2 = new Tree {
+      'some-file.txt': b2
+      'some-file2.txt': b1
+      'sub-directory.d': t1
+    }
+    t3 = new Tree {
+      'another-file.txt': b1
+    }
+    c1 = new Commit {
+      tree: t1
+      author:
+        name: 'Git Author'
+        email: 'author@git.com'
+        date: d1
+      message: 'Artificial commit 1'
+    }
+    c2 = new Commit {
+      tree: t2
+      author:
+        name: 'Git Author'
+        email: 'author@git.com'
+        date: d2
+      message: 'Artificial commit 2'
+      parents: [c1]
+    }
+    c3 = new Commit {
+      tree: t3
+      author:
+        name: 'Git User'
+        email: 'user@domain.com'
+        date: d3
+      committer:
+        name: 'Git Commiter'
+        email: 'committer@git.com'
+        date: d4
+      message: 'Artificial commit 3'
+      parents: [c2]
+    }
+    tag = new Tag {
+      object: c2
+      name: 'v0.0.1'
+      tagger:
+        name: 'Git Tagger'
+        email: 'tagger@git.com'
+      date: d2
+      message: 'Tag second commit'
+    }
+    n1 = new Commit {
+      tree: new Tree {
+        'single-file.txt':
+          new Blob 'Single file in tree for new branch'
+      }
+      author:
+        name: 'Git User'
+        email: 'user@git.com'
+        date: new Date 1
+      message: 'New branch start'
+    }
+    n2 = new Commit {
+      tree: new Tree {
+        'single-file.txt':
+          new Blob 'Single file in tree for new branch'
+        'subdir': new Tree {
+          'subdir-single-file.txt':
+            new Blob 'File in subdirectory'
+        }
+      }
+      author:
+        name: 'Git User'
+        email: 'user@git.com'
+        date: new Date 2
+      message: 'New branch second commit'
+      parents: [n1]
+    }
+    ctx =
+      b1: b1, b2: b2, b3: b3
+      t1: t1, t2: t2, t3: t3
+      c1: c1, c2: c2, c3: c3
+      tag: tag, n1: n1, n2: n2
+
+    writeGitGraph repoPath, c3, 'master', ->
+      writeGitGraph repoPath, tag, tag.name, ->
+        createGitRepo (emptyRepoPath) ->
+          cb(repoPath, emptyRepoPath, ctx)
+
+createGitRepo = (cb) ->
+  temp.mkdir 'test-repo', (err, repoPath) =>
+    git = spawn 'git', ['init', '--bare', repoPath]
     git.on 'exit', ->
-      done()
+      cb(repoPath)
 
-deleteGitRepo = -> wrench.rmdirSyncRecursive(@path, true)
-
-captureOutput = (child, cb) ->
-  out = []
-  err = []
-  child.stdout.setEncoding 'utf8'
-  child.stderr.setEncoding 'utf8'
-  child.stdout.on 'data', (chunk) ->
-    out.push chunk
-  child.stderr.on 'data', (chunk) ->
-    err.push chunk
-  child.stderr.on 'end', ->
-    cb(out.join(''), err.join(''))
-  
 writeGitGraph = (repo, root, refName, cb) ->
   count = 0
   writeCb = ->
@@ -61,69 +450,6 @@ writeGitObject = (repo, serialized, cb) ->
     bufferFile.on 'error', (err) ->
       if typeof cb == 'function' then cb()
 
-testObjects = ->
-  d1 = new Date 1000000000
-  d2 = new Date 2000000000
-  d3 = new Date 3000000000
-  d4 = new Date 4000000000
-  str = ''
-  for i in [0...1000]
-    str += 'test content/test content2/test content3\n'
-  @b1 = new Blob str
-  # this encode second blob as a delta of the first in packfiles
-  @b2 = new Blob str + 'append'
-  @b3 = new Blob 'subdir test content\n'
-  @t1 = new Tree {
-    'file-under-tree': @b3
-  }
-  @t2 = new Tree {
-    'some-file.txt': @b2
-    'some-file2.txt': @b1
-    'sub-directory.d': @t1
-  }
-  @t3 = new Tree {
-    'another-file.txt': @b1
-  }
-  @c1 = new Commit {
-    tree: @t1
-    author:
-      name: 'Git Author'
-      email: 'author@git.com'
-      date: d1
-    message: 'Artificial commit 1'
-  }
-  @c2 = new Commit {
-    tree: @t2
-    author:
-      name: 'Git Author'
-      email: 'author@git.com'
-      date: d2
-    message: 'Artificial commit 2'
-    parents: [@c1]
-  }
-  @c3 = new Commit {
-    tree: @t3
-    author:
-      name: 'Git User'
-      email: 'user@domain.com'
-      date: d3
-    committer:
-      name: 'Git Commiter'
-      email: 'committer@git.com'
-      date: d4
-    message: 'Artificial commit 3'
-    parents: [@c2]
-  }
-  @tag = new Tag {
-    object: @c2
-    name: 'v0.0.1'
-    tagger:
-      name: 'Git Tagger'
-      email: 'tagger@git.com'
-    date: d2
-    message: 'Tag second commit'
-  }
-
 blobShouldEqual = (b1, b2) ->
   c1 = b1.contents
   c2 = b2.contents
@@ -151,340 +477,8 @@ historyShouldEqual = (c1, c2) ->
   for i in [0...c1.parents.length]
     historyShouldEqual(c1.parents[i], c2.parents[i])
 
-suite 'smart protocol', ->
-
-  suiteSetup createGitRepo
-
-  suiteTeardown deleteGitRepo
-
-  setup (done) ->
-    testObjects.call @
-    # write objects to the repository
-    writeGitGraph @path, @c3, 'master', =>
-      writeGitGraph @path, @tag, @tag.name, =>
-        @remote = connect(@path)
-        @n1 = new Commit {
-          tree: new Tree {
-            'single-file.txt':
-              new Blob 'Single file in tree for new branch'
-          }
-          author:
-            name: 'Git User'
-            email: 'user@git.com'
-            date: new Date 1
-          message: 'New branch start'
-        }
-        @n2 = new Commit {
-          tree: new Tree {
-            'single-file.txt':
-              new Blob 'Single file in tree for new branch'
-            'subdir': new Tree {
-              'subdir-single-file.txt':
-                new Blob 'File in subdirectory'
-            }
-          }
-          author:
-            name: 'Git User'
-            email: 'user@git.com'
-            date: new Date 2
-          message: 'New branch second commit'
-          parents: [@n1]
-        }
-        done()
-
-  test 'fetch reference discovery', (done) ->
-    remaining = 1
-    fetch = @remote.fetch()
-
-    fetch.on 'discover', (refs) =>
-      expect(Object.keys(refs).length).to.equal 3
-      expect(refs.HEAD).to.equal refs['heads/master']
-      expect(refs['heads/master'].sha1).to.equal @c3.serialize().getHash()
-      expect(refs['tags/v0.0.1'].sha1).to.equal @tag.serialize().getHash()
-      expect(refs['tags/v0.0.1'].peeled).to.equal @c2.serialize().getHash()
-      remaining--
-      fetch.flush()
-
-    fetch.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-  test 'fetch reference discovery on empty repo', (done) ->
-    ctx = {}
-    remaining = 1
-    createGitRepo.call ctx, ->
-      remote = connect(ctx.path)
-      fetch = remote.fetch()
-      fetch.on 'discover', (refs) =>
-        expect(Object.keys(refs).length).to.equal 0
-        # can't fetch from an empty repo
-        expect(fetch._capabilities).to.equal undefined
-        remaining--
-        fetch.flush()
-
-      fetch.on 'end', ->
-        deleteGitRepo.call ctx
-        if remaining
-          done(new Error('Missing some verifications'))
-        else
-          done()
-
-  test 'fetch all refs', (done) ->
-    remaining = 1
-    fetch = @remote.fetch()
-
-    fetch.on 'discover', (refs) ->
-      refs['heads/master'].want()
-      fetch.flush()
-
-    fetch.on 'fetched', (fetched) =>
-      remaining--
-      historyShouldEqual(fetched['heads/master'], @c3)
-
-    fetch.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-
-  test 'fetch only the top commit', (done) ->
-    remaining = 1
-    fetch = @remote.fetch()
-    fetch.maxDepth = 1
-
-    fetch.on 'discover', (refs) ->
-      refs['heads/master'].want()
-      fetch.flush()
-
-    fetch.on 'fetched', (fetched) =>
-      remaining--
-      expect(fetched['heads/master'].serialize().getHash()).to.equal(
-        @c3.serialize().getHash())
-      treeShouldEqual(fetched['heads/master'].tree, @c3.tree)
-
-    fetch.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-    fetch._errStream.on 'data', (d) -> console.log(d.toString())
-
-  test 'push reference discovery', (done) ->
-    remaining = 1
-    push = @remote.push()
-
-    push.on 'discover', (refs) =>
-      expect(Object.keys(refs).length).to.equal 2
-      expect(refs['heads/master'].sha1).to.equal @c3.serialize().getHash()
-      expect(refs['tags/v0.0.1'].sha1).to.equal @tag.serialize().getHash()
-      remaining--
-      push.flush()
-
-    push.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-  test 'push to empty repo', (done) ->
-    ctx = {}
-    remaining = 2
-    createGitRepo.call ctx, =>
-      remote = connect(ctx.path)
-      push = remote.push()
-      push.on 'discover', (refs) =>
-        expect(Object.keys(refs).length).to.equal 0
-        expect(push._capabilities).to.deep.equal [
-            'report-status'
-          , 'delete-refs'
-          , 'side-band-64k'
-          , 'quiet'
-          , 'ofs-delta'
-        ]
-        remaining--
-        push.create 'heads/master', @n2
-        push.flush()
-
-      push.on 'pushed', (statusReport) ->
-        expect(statusReport).to.deep.equal [
-          'unpack ok'
-          'ok refs/heads/master'
-        ]
-        remaining--
-
-      push.on 'end', ->
-        deleteGitRepo.call ctx
-        if remaining
-          done(new Error('Missing some verifications'))
-        else
-          done()
-
-  test 'push to an existing branch', (done) ->
-    remaining = 1
-    push = @remote.push()
-
-    push.on 'discover', (refs) =>
-      refs['heads/master'].update @n2
-      push.flush()
-
-    push.on 'pushed', (statusReport) ->
-      expect(statusReport).to.deep.equal [
-        'unpack ok'
-        'ok refs/heads/master'
-      ]
-      remaining--
-
-    push.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-  test 'push to a new branch', (done) ->
-    remaining = 1
-    push = @remote.push()
-
-    push.on 'discover', (refs) =>
-      push.create 'heads/topic', @n2
-      push.flush()
-
-    push.on 'pushed', (statusReport) ->
-      expect(statusReport).to.deep.equal [
-        'unpack ok'
-        'ok refs/heads/topic'
-      ]
-      remaining--
-
-    push.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-  test 'create new branch from existing commits', (done) ->
-    # according to git docs, we need to send an empty packfile
-    # in this case, but it seems to work anyway
-    remaining = 1
-    push = @remote.push()
-
-    push.on 'discover', (refs) =>
-      push.create 'heads/some-branch', @c2
-      push.flush()
-
-    push.on 'pushed', (statusReport) ->
-      expect(statusReport).to.deep.equal [
-        'unpack ok'
-        'ok refs/heads/some-branch'
-      ]
-      remaining--
-
-    push.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-  test 'delete current branch fail', (done) ->
-    # Not testing this code but good for documentation anyway
-    remaining = 1
-    push = @remote.push()
-
-    push.on 'discover', (refs) =>
-      refs['heads/master'].del()
-      push.flush()
-
-    push.on 'pushed', (statusReport) ->
-      expect(statusReport).to.deep.equal [
-        'unpack ok'
-        'ng refs/heads/master deletion of the current branch prohibited'
-      ]
-      remaining--
-
-    push.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-  test 'delete tag', (done) ->
-    remaining = 1
-    push = @remote.push()
-
-    push.on 'discover', (refs) =>
-      refs['tags/v0.0.1'].del()
-      push.flush()
-
-    push.on 'pushed', (statusReport) ->
-      expect(statusReport).to.deep.equal [
-        'unpack ok'
-        'ok refs/tags/v0.0.1'
-      ]
-      remaining--
-
-    push.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-  test 'delete two branches', (done) ->
-    remaining = 1
-    push = @remote.push()
-
-    push.on 'discover', (refs) =>
-      refs['heads/some-branch'].del()
-      refs['heads/topic'].del()
-      push.flush()
-
-    push.on 'pushed', (statusReport) ->
-      expect(statusReport).to.deep.equal [
-        'unpack ok'
-        'ok refs/heads/some-branch'
-        'ok refs/heads/topic'
-      ]
-      remaining--
-
-    push.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
-
-  test 'create two branches and update another', (done) ->
-    remaining = 1
-    push = @remote.push()
-
-    push.on 'discover', (refs) =>
-      push.create 'heads/topic1', @n1
-      push.create 'heads/topic2', @n2
-      refs['heads/master'].update new Commit {
-          tree: new Tree {
-            'last-version.txt':
-              new Blob 'Single file in tree for new branch'
-          }
-          author:
-            name: 'Git User'
-            email: 'user@git.com'
-            date: new Date 3
-          message: 'New branch second commit'
-        }
-      push.flush()
-
-    push.on 'pushed', (statusReport) ->
-      expect(statusReport).to.deep.equal [
-        'unpack ok'
-        'ok refs/heads/topic1'
-        'ok refs/heads/topic2'
-        'ok refs/heads/master'
-      ]
-      remaining--
-
-    push.on 'end', ->
-      if remaining
-        done(new Error('Missing some verifications'))
-      else
-        done()
+semaphore = wait()
+prepareTestEnv (repoPath, emptyRepoPath, obj) ->
+  createSuite('file', connect(repoPath), connect(emptyRepoPath), obj)
+  semaphore.resume()
+# file:// transport
