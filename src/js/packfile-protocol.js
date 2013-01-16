@@ -3,6 +3,7 @@ var util = require('util')
   , binary = require('binary')
   , git = require('git-core')
   , EMPTY_SHA1 = new Buffer(40)
+  , CAPS = ' capabilities^{} '
   , NULL = new Buffer([0])
   , NACK = new Buffer('0008NAK\n')
   , PACK = new Buffer('PACK');
@@ -79,17 +80,24 @@ function parseDiscovery(conversation) {
               }
             }
 
-            if (!capabilities) {
-              // first line, read refname and capabilities
-              vars = binary.parse(parsed.remaining)
-                .scan('refName', NULL)
-                .buffer('capabilities', parsed.remaining.length)
-                .vars;
-
-                parseRef(vars.refName);
-                capabilities = vars.capabilities.toString().trim().split(' ');
+            if (sha1 === EMPTY_SHA1) {
+              // new repository on push discover
+              done = true;
+              capabilities = parsed.remaining.slice(CAPS.length)
+                .toString().trim().split(' ');
             } else {
-              parseRef(parsed.remaining);
+              if (!capabilities) {
+                // first line, read refname and capabilities
+                vars = binary.parse(parsed.remaining)
+                  .scan('refName', NULL)
+                  .buffer('capabilities', parsed.remaining.length)
+                  .vars;
+                  parseRef(vars.refName);
+                  capabilities = vars.capabilities.toString().trim()
+                    .split(' ');
+              } else {
+                parseRef(parsed.remaining);
+              }
             }
           });
 

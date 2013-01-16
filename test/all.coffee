@@ -211,6 +211,25 @@ suite 'smart protocol', ->
       else
         done()
 
+  test 'fetch reference discovery on empty repo', (done) ->
+    ctx = {}
+    remaining = 1
+    createGitRepo.call ctx, ->
+      remote = new FileRemote path: ctx.path
+      fetch = remote.fetch()
+      fetch.on 'discover', (refs) =>
+        expect(Object.keys(refs).length).to.equal 0
+        # can't fetch from an empty repo
+        expect(fetch._capabilities).to.equal undefined
+        remaining--
+        fetch.flush()
+
+      fetch.on 'end', ->
+        deleteGitRepo.call ctx
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
 
   test 'fetch all refs', (done) ->
     remaining = 1
@@ -270,6 +289,39 @@ suite 'smart protocol', ->
         done(new Error('Missing some verifications'))
       else
         done()
+
+  test 'push to empty repo', (done) ->
+    ctx = {}
+    remaining = 2
+    createGitRepo.call ctx, =>
+      remote = new FileRemote path: ctx.path
+      push = remote.push()
+      push.on 'discover', (refs) =>
+        expect(Object.keys(refs).length).to.equal 0
+        expect(push._capabilities).to.deep.equal [
+            'report-status'
+          , 'delete-refs'
+          , 'side-band-64k'
+          , 'quiet'
+          , 'ofs-delta'
+        ]
+        remaining--
+        push.create 'heads/master', @n2
+        push.flush()
+
+      push.on 'pushed', (statusReport) ->
+        expect(statusReport).to.deep.equal [
+          'unpack ok'
+          'ok refs/heads/master'
+        ]
+        remaining--
+
+      push.on 'end', ->
+        deleteGitRepo.call ctx
+        if remaining
+          done(new Error('Missing some verifications'))
+        else
+          done()
 
   test 'push to an existing branch', (done) ->
     remaining = 1
