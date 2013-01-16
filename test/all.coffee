@@ -365,7 +365,31 @@ suite 'smart protocol', ->
       else
         done()
 
+  test 'create new branch from existing commits', (done) ->
+    # according to git docs, we need to send an empty packfile
+    # in this case, but it seems to work anyway
+    remaining = 1
+    push = @remote.push()
+
+    push.on 'discover', (refs) =>
+      push.create 'heads/some-branch', @c2
+      push.flush()
+
+    push.on 'pushed', (statusReport) ->
+      expect(statusReport).to.deep.equal [
+        'unpack ok'
+        'ok refs/heads/some-branch'
+      ]
+      remaining--
+
+    push.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()
+
   test 'delete current branch fail', (done) ->
+    # Not testing this code but good for documentation anyway
     remaining = 1
     push = @remote.push()
 
@@ -386,7 +410,6 @@ suite 'smart protocol', ->
       else
         done()
 
-
   test 'delete tag', (done) ->
     remaining = 1
     push = @remote.push()
@@ -399,6 +422,64 @@ suite 'smart protocol', ->
       expect(statusReport).to.deep.equal [
         'unpack ok'
         'ok refs/tags/v0.0.1'
+      ]
+      remaining--
+
+    push.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()
+
+  test 'delete two branches', (done) ->
+    remaining = 1
+    push = @remote.push()
+
+    push.on 'discover', (refs) =>
+      refs['heads/some-branch'].del()
+      refs['heads/topic'].del()
+      push.flush()
+
+    push.on 'pushed', (statusReport) ->
+      expect(statusReport).to.deep.equal [
+        'unpack ok'
+        'ok refs/heads/some-branch'
+        'ok refs/heads/topic'
+      ]
+      remaining--
+
+    push.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()
+
+  test 'create two branches and update another', (done) ->
+    remaining = 1
+    push = @remote.push()
+
+    push.on 'discover', (refs) =>
+      push.create 'heads/topic1', @n1
+      push.create 'heads/topic2', @n2
+      refs['heads/master'].update new Commit {
+          tree: new Tree {
+            'last-version.txt':
+              new Blob 'Single file in tree for new branch'
+          }
+          author:
+            name: 'Git User'
+            email: 'user@git.com'
+            date: new Date 3
+          message: 'New branch second commit'
+        }
+      push.flush()
+
+    push.on 'pushed', (statusReport) ->
+      expect(statusReport).to.deep.equal [
+        'unpack ok'
+        'ok refs/heads/topic1'
+        'ok refs/heads/topic2'
+        'ok refs/heads/master'
       ]
       remaining--
 
