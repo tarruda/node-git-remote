@@ -7,7 +7,7 @@ wrench = require 'wrench'
 {spawn} = require 'child_process'
 {expect} = require 'chai'
 {Blob, Tree, Commit, Tag, Pack} = require 'git-core'
-FileRemote = require '../src/js/file-transport'
+connect = require '../src/js'
 
 
 createGitRepo = (done) ->
@@ -162,7 +162,7 @@ suite 'smart protocol', ->
     # write objects to the repository
     writeGitGraph @path, @c3, 'master', =>
       writeGitGraph @path, @tag, @tag.name, =>
-        @remote = new FileRemote path: @path
+        @remote = connect(@path)
         @n1 = new Commit {
           tree: new Tree {
             'single-file.txt':
@@ -215,7 +215,7 @@ suite 'smart protocol', ->
     ctx = {}
     remaining = 1
     createGitRepo.call ctx, ->
-      remote = new FileRemote path: ctx.path
+      remote = connect(ctx.path)
       fetch = remote.fetch()
       fetch.on 'discover', (refs) =>
         expect(Object.keys(refs).length).to.equal 0
@@ -294,7 +294,7 @@ suite 'smart protocol', ->
     ctx = {}
     remaining = 2
     createGitRepo.call ctx, =>
-      remote = new FileRemote path: ctx.path
+      remote = connect(ctx.path)
       push = remote.push()
       push.on 'discover', (refs) =>
         expect(Object.keys(refs).length).to.equal 0
