@@ -13,7 +13,7 @@ FileRemote = require '../src/js/file-transport'
 createGitRepo = (done) ->
   temp.mkdir 'test-repo', (err, path) =>
     @path = path
-    git = spawn 'git', ['init', path]
+    git = spawn 'git', ['init', '--bare', path]
     git.on 'exit', ->
       done()
 
@@ -44,12 +44,12 @@ writeGitGraph = (repo, root, refName, cb) ->
       refType = 'tags'
     else
       refType = 'heads'
-    refPath = path.join(repo, '.git', 'refs', refType, refName)
+    refPath = path.join(repo, 'refs', refType, refName)
     fs.writeFileSync(refPath, head.getHash(), 'utf8')
       
 writeGitObject = (repo, serialized, cb) ->
   hash = serialized.getHash()
-  dir = path.join(repo, '.git', 'objects', hash.slice(0, 2))
+  dir = path.join(repo, 'objects', hash.slice(0, 2))
   fs.mkdir dir, ->
     bufferPath = path.join(dir, hash.slice(2))
     bufferFile = fs.createWriteStream(bufferPath, mode: 0o444)
@@ -155,7 +155,7 @@ suite 'smart protocol', ->
 
   suiteSetup createGitRepo
 
-  # suiteTeardown deleteGitRepo
+  suiteTeardown deleteGitRepo
 
   setup (done) ->
     testObjects.call @
@@ -163,18 +163,45 @@ suite 'smart protocol', ->
     writeGitGraph @path, @c3, 'master', =>
       writeGitGraph @path, @tag, @tag.name, =>
         @remote = new FileRemote path: @path
+        @n1 = new Commit {
+          tree: new Tree {
+            'single-file.txt':
+              new Blob 'Single file in tree for new branch'
+          }
+          author:
+            name: 'Git User'
+            email: 'user@git.com'
+            date: new Date 1
+          message: 'New branch start'
+        }
+        @n2 = new Commit {
+          tree: new Tree {
+            'single-file.txt':
+              new Blob 'Single file in tree for new branch'
+            'subdir': new Tree {
+              'subdir-single-file.txt':
+                new Blob 'File in subdirectory'
+            }
+          }
+          author:
+            name: 'Git User'
+            email: 'user@git.com'
+            date: new Date 2
+          message: 'New branch second commit'
+          parents: [@n1]
+        }
         done()
 
-  test 'reference discovery on fetch', (done) ->
+  test 'fetch reference discovery', (done) ->
     remaining = 1
     fetch = @remote.fetch()
 
     fetch.on 'discover', (refs) =>
       expect(Object.keys(refs).length).to.equal 3
-      expect(refs.HEAD).to.equal refs.master
-      expect(refs.master.sha1).to.equal @c3.serialize().getHash()
-      expect(refs['v0.0.1'].sha1).to.equal @tag.serialize().getHash()
-      expect(refs['v0.0.1'].peeled).to.equal @c2.serialize().getHash()
+      expect(refs.HEAD).to.equal refs['heads/master']
+      expect(refs['heads/master'].sha1).to.equal @c3.serialize().getHash()
+      expect(refs['tags/v0.0.1'].sha1).to.equal @tag.serialize().getHash()
+      expect(refs['tags/v0.0.1'].peeled).to.equal @c2.serialize().getHash()
       remaining--
       fetch.flush()
 
@@ -190,12 +217,12 @@ suite 'smart protocol', ->
     fetch = @remote.fetch()
 
     fetch.on 'discover', (refs) ->
-      refs.master.want()
+      refs['heads/master'].want()
       fetch.flush()
 
     fetch.on 'fetched', (fetched) =>
       remaining--
-      historyShouldEqual(fetched.master, @c3)
+      historyShouldEqual(fetched['heads/master'], @c3)
 
     fetch.on 'end', ->
       if remaining
@@ -210,14 +237,14 @@ suite 'smart protocol', ->
     fetch.maxDepth = 1
 
     fetch.on 'discover', (refs) ->
-      refs.master.want()
+      refs['heads/master'].want()
       fetch.flush()
 
     fetch.on 'fetched', (fetched) =>
       remaining--
-      expect(fetched.master.serialize().getHash()).to.equal(
+      expect(fetched['heads/master'].serialize().getHash()).to.equal(
         @c3.serialize().getHash())
-      treeShouldEqual(fetched.master.tree, @c3.tree)
+      treeShouldEqual(fetched['heads/master'].tree, @c3.tree)
 
     fetch.on 'end', ->
       if remaining
@@ -226,3 +253,41 @@ suite 'smart protocol', ->
         done()
 
     fetch._errStream.on 'data', (d) -> console.log(d.toString())
+
+  test 'push reference discovery', (done) ->
+    remaining = 1
+    push = @remote.push()
+
+    push.on 'discover', (refs) =>
+      expect(Object.keys(refs).length).to.equal 2
+      expect(refs['heads/master'].sha1).to.equal @c3.serialize().getHash()
+      expect(refs['tags/v0.0.1'].sha1).to.equal @tag.serialize().getHash()
+      remaining--
+      push.flush()
+
+    push.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()
+
+  test 'push to an existing branch', (done) ->
+    remaining = 1
+    push = @remote.push()
+
+    push.on 'discover', (refs) =>
+      refs['heads/master'].update @n2
+      push.flush()
+
+    push.on 'pushed', (statusReport) ->
+      expect(statusReport).to.deep.equal [
+        'unpack ok'
+        'ok refs/heads/master'
+      ]
+      remaining--
+
+    push.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()

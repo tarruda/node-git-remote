@@ -31,7 +31,7 @@ function parseDiscovery(conversation) {
   conversation.state = 'discovering'
 
   if (conversation instanceof Push)
-    refCls = PushDiscoveryRef;
+    refCls = PushDiscoveredRef;
   else
     refCls = FetchDiscoveredRef;
 
@@ -53,20 +53,19 @@ function parseDiscovery(conversation) {
               , sha1 = parsed.sha1.toString('utf8');
 
             function parseRef(refName) {
-              var match, type;
+              var match;
 
               refName = refName.toString('utf8');
 
-              if (match = /refs\/(heads|tags)\/(.+)\s*$/.exec(refName)) {
-                refName = match[2];
-                if (/\^\{\}$/.test(match[2])) {
+              if (match = /refs\/((?:heads|tags)\/.+)\s*$/.exec(refName)) {
+                refName = match[1];
+                if (/\^\{\}$/.test(refName)) {
                   refName = refName.slice(0, refName.length - 3);
                   if (refs[refName])
                     refs[refName].peeled = sha1;               
                 } else {
-                  type = 'tags' ? 'tag' : 'branch';
                   refs[refName] = new refCls(
-                    conversation, sha1, refName, type);
+                    conversation, sha1, refName);
                   if (head === sha1) {
                     refs['HEAD'] = refs[refName];
                   }
@@ -188,6 +187,59 @@ function parseFetchData(fetch) {
 }
 
 
+function sendPackAndParseStatus(push) {
+  var statusParser, done
+    , inStream = push._inStream
+    , outStream = push._outStream
+    , statusReport = [];
+
+  inStream.write('0000', 'utf8');
+  inStream.write(push.pack.serialize());
+
+  statusParser = binary().buffer('length', 4).tap(function(parsed) {
+    var remaining = parseInt(parsed.length.toString(), 16);
+
+    this.buffer('unpackStatus', remaining - 4).tap(function(parsed) {
+      statusReport.push(parsed.unpackStatus.toString('utf8').trim());
+    });
+
+    this.loop(function(end) {
+
+      this.buffer('length', 4).tap(function(parsed) {
+        var remaining = parseInt(parsed.length.toString(), 16);
+
+        if (remaining > 0) {
+          this.buffer('commandStatus', remaining - 4).tap(function(parsed) {
+            statusReport.push(parsed.commandStatus.toString('utf8').trim());
+          });
+        } else {
+          done = true;
+        }
+
+      });
+
+      if (done) {
+        end();
+        outStream.removeListener('data', onData);
+        push.statusReport = statusReport;
+        push.state = 'pushed';
+        push.emit('pushed', statusReport);
+        push.emit('end');
+      }
+    
+    });
+    
+  });
+  
+
+  function onData(data) {
+    statusParser.write(data);
+  }
+
+  outStream.on('data', onData);
+}
+
+
 function fetchCapabilities(serverCapabilities) {
   var rv = [];
 
@@ -210,6 +262,39 @@ function fetchCapabilities(serverCapabilities) {
   return rv.join(' ');
 }
 
+
+function pushCapabilities(serverCapabilities) {
+  var rv = [];
+
+  if (serverCapabilities.indexOf('report-status') !== -1)
+    rv.push('report-status');
+
+  if (serverCapabilities.indexOf('delete-refs') !== -1)
+    rv.push('delete-refs');
+
+  if (serverCapabilities.indexOf('ofs-delta') !== -1)
+    rv.push('ofs-delta');
+
+  return rv.join(' ');
+}
+
+
+function setHistoryBase(baseSha1, history) {
+  var i;
+
+  if (history.parents && history.parents.length) {
+    for (i = 0;i < history.parents.length;i++) {
+      if (history.parents[i] instanceof git.Commit)
+        setHistoryBase(baseSha1, history.parents[i]);
+    }
+  } else {
+    if (!history.parents)
+      history.parents = [];
+    history.parents.push(baseSha1);
+  }
+}
+
+
 function Conversation(inStream, outStream, errStream) {
   var _this = this;
 
@@ -227,11 +312,10 @@ function Conversation(inStream, outStream, errStream) {
 util.inherits(Conversation, events.EventEmitter);
 
 
-function DiscoveredRef(conversation, sha1, name, type) {
+function DiscoveredRef(conversation, sha1, name) {
   this._conversation = conversation;
   this.sha1 = sha1;
   this.name = name;
-  this.type = type;
 }
 
 
@@ -258,6 +342,35 @@ FetchDiscoveredRef.prototype.want = function() {
 };
 
 
+function PushDiscoveredRef() {
+  this.constructor.super_.apply(this, arguments);
+}
+util.inherits(PushDiscoveredRef, DiscoveredRef);
+
+PushDiscoveredRef.prototype.update = function(history) {
+  var line
+    , refName = 'refs/' + this.name
+    , inStream = this._conversation._inStream;
+
+  setHistoryBase(this.sha1, history);
+  line = this.sha1 + ' ' + history.serialize().getHash() + ' ' + refName;
+
+  if (!this._conversation._capabilitiesSent) {
+    line = Buffer.concat([
+        new Buffer(line)
+      , NULL
+      , new Buffer(' ' + pushCapabilities(this._conversation._capabilities))
+    ]);
+    this._conversation._capabilitiesSent = true;
+  } else {
+    line += '\n';
+  }
+
+  sendPktLine(inStream, line);
+  this._conversation.pack.objects.push(history);
+};
+
+
 function Fetch() {
   this.constructor.super_.apply(this, arguments);
 }
@@ -273,9 +386,20 @@ Fetch.prototype.flush = function() {
 
 function Push() {
   this.constructor.super_.apply(this, arguments);
+  this.pack = new git.Pack()
 }
 util.inherits(Push, Conversation);
 
+Push.prototype.flush = function() {
+  if (this.state === 'discovered' && this.pack.objects.length)
+    sendPackAndParseStatus(this);
+  else
+    this._inStream.write('0000', 'utf8');
+};
+
+Push.prototype.create = function(name, history) {
+
+};
 
 exports.Fetch = Fetch;
 exports.Push = Push;

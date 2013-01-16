@@ -16,4 +16,11 @@ Remote.prototype.fetch = function() {
                             gitUpload.stderr);
 };
 
+Remote.prototype.push = function() {
+  var gitReceive = spawn('git-receive-pack', [this.path]);
+
+  return new packfile.Push(gitReceive.stdin, gitReceive.stdout,
+                            gitReceive.stderr);
+};
+
 module.exports = Remote;
