@@ -9,12 +9,16 @@ wrench = require 'wrench'
 connect = require '../src/js'
 
 
-createSuite = (transport, remote, emptyRemote, obj) ->
+createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
   suite 'smart protocol ' + transport, ->
 
-    suiteTeardown = ->
+    suiteTeardown (done) ->
       wrench.rmdirSyncRecursive(remote.path, true)
       wrench.rmdirSyncRecursive(emptyRemote.path, true)
+      if extraTeardown
+        extraTeardown(done)
+      else
+        done()
 
     test 'fetch reference discovery', (done) ->
       remaining = 1
@@ -93,8 +97,6 @@ createSuite = (transport, remote, emptyRemote, obj) ->
           done(new Error('Missing some verifications'))
         else
           done()
-
-      fetch._errStream.on 'data', (d) -> console.log(d.toString())
 
     test 'push reference discovery', (done) ->
       remaining = 1
@@ -478,7 +480,26 @@ historyShouldEqual = (c1, c2) ->
     historyShouldEqual(c1.parents[i], c2.parents[i])
 
 semaphore = wait()
+envsRemaining = 2
+
 prepareTestEnv (repoPath, emptyRepoPath, obj) ->
-  createSuite('file', connect(repoPath), connect(emptyRepoPath), obj)
-  semaphore.resume()
+  createSuite 'file', connect(repoPath), connect(emptyRepoPath), obj
+  ack()
+
+# start a temporary git daemon
+daemon = spawn 'git', ['daemon', '--base-path=/', '--export-all',
+  '--enable=receive-pack'], stdio: [null, 'ignore', 'ignore']
+prepareTestEnv (repoPath, emptyRepoPath, obj) ->
+  repoPath = "git://127.0.0.1#{repoPath}"
+  emptyRepoPath = "git://127.0.0.1#{emptyRepoPath}"
+  createSuite 'git', connect(repoPath), connect(emptyRepoPath), obj,
+    (done) ->
+      daemon.kill 'SIGKILL'
+      done()
+  ack()
+
+ack = ->
+  envsRemaining--
+  if !envsRemaining
+    semaphore.resume()
 # file:// transport
