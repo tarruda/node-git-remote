@@ -291,3 +291,67 @@ suite 'smart protocol', ->
         done(new Error('Missing some verifications'))
       else
         done()
+
+  test 'push to a new branch', (done) ->
+    remaining = 1
+    push = @remote.push()
+
+    push.on 'discover', (refs) =>
+      push.create 'heads/topic', @n2
+      push.flush()
+
+    push.on 'pushed', (statusReport) ->
+      expect(statusReport).to.deep.equal [
+        'unpack ok'
+        'ok refs/heads/topic'
+      ]
+      remaining--
+
+    push.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()
+
+  test 'delete current branch fail', (done) ->
+    remaining = 1
+    push = @remote.push()
+
+    push.on 'discover', (refs) =>
+      refs['heads/master'].del()
+      push.flush()
+
+    push.on 'pushed', (statusReport) ->
+      expect(statusReport).to.deep.equal [
+        'unpack ok'
+        'ng refs/heads/master deletion of the current branch prohibited'
+      ]
+      remaining--
+
+    push.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()
+
+
+  test 'delete tag', (done) ->
+    remaining = 1
+    push = @remote.push()
+
+    push.on 'discover', (refs) =>
+      refs['tags/v0.0.1'].del()
+      push.flush()
+
+    push.on 'pushed', (statusReport) ->
+      expect(statusReport).to.deep.equal [
+        'unpack ok'
+        'ok refs/tags/v0.0.1'
+      ]
+      remaining--
+
+    push.on 'end', ->
+      if remaining
+        done(new Error('Missing some verifications'))
+      else
+        done()

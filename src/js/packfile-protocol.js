@@ -2,9 +2,13 @@ var util = require('util')
   , events = require('events')
   , binary = require('binary')
   , git = require('git-core')
+  , EMPTY_SHA1 = new Buffer(40)
   , NULL = new Buffer([0])
   , NACK = new Buffer('0008NAK\n')
   , PACK = new Buffer('PACK');
+
+EMPTY_SHA1.fill('0');
+EMPTY_SHA1 = EMPTY_SHA1.toString('utf8');
 
 
 function sendPktLine(inStream, data) {
@@ -116,7 +120,7 @@ function parseFetchData(fetch) {
     , fetched = {}
     , packData = [];
 
-  fetch.state = 'receiving';
+  fetch.state = 'fetching';
 
   if (fetch.maxDepth > 0) {
     sendPktLine(inStream, 'deepen ' + fetch.maxDepth.toString() + '\n');
@@ -187,14 +191,13 @@ function parseFetchData(fetch) {
 }
 
 
-function sendPackAndParseStatus(push) {
+function parseStatus(push) {
   var statusParser, done
     , inStream = push._inStream
     , outStream = push._outStream
     , statusReport = [];
 
-  inStream.write('0000', 'utf8');
-  inStream.write(push.pack.serialize());
+  push.state = 'pushing';
 
   statusParser = binary().buffer('length', 4).tap(function(parsed) {
     var remaining = parseInt(parsed.length.toString(), 16);
@@ -231,7 +234,6 @@ function sendPackAndParseStatus(push) {
     
   });
   
-
   function onData(data) {
     statusParser.write(data);
   }
@@ -304,8 +306,8 @@ function Conversation(inStream, outStream, errStream) {
   parseDiscovery(this, this instanceof Push);
 
   outStream.once('close', function() {
-    // do not emit 'end' when fetching and leave that job to the 'fetched'
-    // event
+    // do not emit 'end' when fetching/pushing, that should be handled
+    // later
     if (_this.state === 'discovered') _this.emit('end');
   });
 }
@@ -352,8 +354,16 @@ PushDiscoveredRef.prototype.update = function(history) {
     , refName = 'refs/' + this.name
     , inStream = this._conversation._inStream;
 
-  setHistoryBase(this.sha1, history);
-  line = this.sha1 + ' ' + history.serialize().getHash() + ' ' + refName;
+  if (this.sha1 !== EMPTY_SHA1 && history !== EMPTY_SHA1) {
+    setHistoryBase(this.sha1, history);
+  }
+
+  if (history !== EMPTY_SHA1) {
+    line = this.sha1 + ' ' + history.serialize().getHash() + ' ' + refName;
+    this._conversation.pack.objects.push(history);
+  } else {
+    line = this.sha1 + ' ' + EMPTY_SHA1 + ' ' + refName;
+  }
 
   if (!this._conversation._capabilitiesSent) {
     line = Buffer.concat([
@@ -367,7 +377,11 @@ PushDiscoveredRef.prototype.update = function(history) {
   }
 
   sendPktLine(inStream, line);
-  this._conversation.pack.objects.push(history);
+  this._conversation._commandSent = true;
+};
+
+PushDiscoveredRef.prototype.del = function() {
+  this.update(EMPTY_SHA1);
 };
 
 
@@ -391,14 +405,23 @@ function Push() {
 util.inherits(Push, Conversation);
 
 Push.prototype.flush = function() {
-  if (this.state === 'discovered' && this.pack.objects.length)
-    sendPackAndParseStatus(this);
-  else
-    this._inStream.write('0000', 'utf8');
+  var inStream = this._inStream;
+
+  inStream.write('0000', 'utf8');
+
+  if (this.state === 'discovered' && this._commandSent) {
+    if (this.pack.objects.length)
+      inStream.write(this.pack.serialize());
+    parseStatus(this);
+  }
 };
 
 Push.prototype.create = function(name, history) {
+  if (name in this.refs)
+    throw new Error('Ref already exists');
 
+  this.refs[name] = new PushDiscoveredRef(this, EMPTY_SHA1, name);
+  this.refs[name].update(history);
 };
 
 exports.Fetch = Fetch;
