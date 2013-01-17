@@ -4,6 +4,11 @@ Provides simple API for interacting with git repositories remotely. For now
 only a subset of the packfile protocol and file/ssh/git transports are
 supported.
 
+#### Installation
+```sh
+npm install git-remote
+```
+
 #### Usage
 
 Consider that we are working from the same context as shown in [git-core usage](https://github.com/tarruda/node-git-core#readme)
@@ -73,5 +78,4 @@ push.on('discover', function(refs) {
 push.on('pushed', function(status) {
   console.log(status);
 });
-
 ```
