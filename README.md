@@ -46,7 +46,7 @@ fetch.on('fetched', function(fetched) {
 });
 
 // It is possible to set the maximum history depth. For example, if all you
-// need is the latest tree of a branch:
+// need is the tree pointed by a tag or branch:
 
 fetch = remote.fetch();
 fetch.maxDepth = 1;
@@ -79,3 +79,35 @@ push.on('pushed', function(status) {
   console.log(status);
 });
 ```
+
+#### Limitations
+
+For now, both the git-core/git-remote packages work completely on memory, so
+don't use this package to retrieve a large amount of objects. If you have
+enough memory, you can see what I mean by opening node REPL and pasting
+this:
+
+```js
+connect = require('git-remote');
+remote = connect('git://github.com/torvalds/linux.git');
+fetch = remote.fetch();
+// never forget maxDepth fetching from big repositories!
+fetch.maxDepth = 1; 
+
+fetch.on('discover', function(refs) {
+  refs['tags/v2.6.11-tree'].want();
+  fetch.flush();
+});
+
+fetch.on('progress', function(p) {
+  console.log(p);
+});
+
+fetch.on('fetched', function(fetched){
+  console.log('Fetched the initial linux import into git. Here is the tag message:');
+  console.log(fetched['tags/v2.6.11-tree'].message);
+});
+```
+
+Inspect the process using 'top' or some other tool. The memory usage should
+go past 400mb.
