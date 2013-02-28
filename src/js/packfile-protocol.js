@@ -62,7 +62,7 @@ function parseDiscovery(conversation) {
 
               refName = refName.toString('utf8');
 
-              if (match = /refs\/((?:heads|tags)\/.+)\s*$/.exec(refName)) {
+              if (match = /refs\/(.*(?:heads|tags)\/.+)\s*$/.exec(refName)) {
                 refName = match[1];
                 if (/\^\{\}$/.test(refName)) {
                   refName = refName.slice(0, refName.length - 3);
