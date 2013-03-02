@@ -74,7 +74,10 @@ function SSHStream(command, conn) {
       });
     });
   });
-  
+
+  conn.on('error', function(){
+    _this.emit('error', arguments);
+  });
 }
 util.inherits(SSHStream, Stream);
 
