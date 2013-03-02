@@ -247,6 +247,7 @@ function parseStatus(push) {
   }
 
   outStream.on('data', onData);
+  
 }
 
 
@@ -317,6 +318,10 @@ function Conversation(inStream, outStream, errStream) {
     // do not emit 'end' when fetching/pushing, that should be handled
     // later
     if (_this.state === 'discovered') _this.emit('end');
+  });
+
+  outStream.on('error', function() {
+    _this.emit('error');
   });
 }
 util.inherits(Conversation, events.EventEmitter);
