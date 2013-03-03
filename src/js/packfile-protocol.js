@@ -320,8 +320,8 @@ function Conversation(inStream, outStream, errStream) {
     if (_this.state === 'discovered') _this.emit('end');
   });
 
-  outStream.on('error', function() {
-    _this.emit('error');
+  outStream.on('error', function(err) {
+    _this.emit('error', err);
   });
 }
 util.inherits(Conversation, events.EventEmitter);

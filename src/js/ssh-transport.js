@@ -75,8 +75,8 @@ function SSHStream(command, conn) {
     });
   });
 
-  conn.on('error', function(){
-    _this.emit('error', arguments);
+  conn.on('error', function(err){
+    _this.emit('error', err);
   });
 }
 util.inherits(SSHStream, Stream);
