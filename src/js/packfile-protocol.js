@@ -63,7 +63,7 @@ function parseDiscovery(conversation) {
               refName = refName.toString('utf8');
 
               if (match = /refs\/(.*(?:heads|tags)\/.+)\s*$/.exec(refName)) {
-                refName = match[1];
+                refName = 'refs/' + match[1];
                 if (/\^\{\}$/.test(refName)) {
                   refName = refName.slice(0, refName.length - 3);
                   if (refs[refName])
@@ -364,7 +364,7 @@ util.inherits(PushDiscoveredRef, DiscoveredRef);
 
 PushDiscoveredRef.prototype.update = function(history) {
   var line
-    , refName = 'refs/' + this.name
+    , refName = this.name
     , inStream = this._conversation._inStream;
 
   if (this.sha1 !== EMPTY_SHA1 && history !== EMPTY_SHA1) {

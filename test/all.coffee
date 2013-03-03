@@ -29,12 +29,12 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
 
       fetch.on 'discover', (refs) =>
         expect(Object.keys(refs).length).to.equal 3
-        expect(refs.HEAD).to.equal refs['heads/master']
-        expect(refs['heads/master'].sha1).to.equal obj.c3.serialize()
+        expect(refs.HEAD).to.equal refs['refs/heads/master']
+        expect(refs['refs/heads/master'].sha1).to.equal obj.c3.serialize()
           .getHash()
-        expect(refs['tags/v0.0.1'].sha1).to.equal obj.tag.serialize()
+        expect(refs['refs/tags/v0.0.1'].sha1).to.equal obj.tag.serialize()
           .getHash()
-        expect(refs['tags/v0.0.1'].peeled).to.equal obj.c2.serialize()
+        expect(refs['refs/tags/v0.0.1'].peeled).to.equal obj.c2.serialize()
           .getHash()
         remaining--
         fetch.flush()
@@ -66,12 +66,12 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       fetch = remote.fetch()
 
       fetch.on 'discover', (refs) ->
-        refs['heads/master'].want()
+        refs['refs/heads/master'].want()
         fetch.flush()
 
       fetch.on 'fetched', (fetched) =>
         remaining--
-        historyShouldEqual(fetched['heads/master'], obj.c3)
+        historyShouldEqual(fetched['refs/heads/master'], obj.c3)
 
       fetch.on 'end', ->
         if remaining
@@ -86,14 +86,14 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       fetch.maxDepth = 1
 
       fetch.on 'discover', (refs) ->
-        refs['heads/master'].want()
+        refs['refs/heads/master'].want()
         fetch.flush()
 
       fetch.on 'fetched', (fetched) =>
         remaining--
-        expect(fetched['heads/master'].serialize().getHash()).to.equal(
+        expect(fetched['refs/heads/master'].serialize().getHash()).to.equal(
           obj.c3.serialize().getHash())
-        treeShouldEqual(fetched['heads/master'].tree, obj.c3.tree)
+        treeShouldEqual(fetched['refs/heads/master'].tree, obj.c3.tree)
 
       fetch.on 'end', ->
         if remaining
@@ -107,9 +107,9 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
 
       push.on 'discover', (refs) =>
         expect(Object.keys(refs).length).to.equal 2
-        expect(refs['heads/master'].sha1).to.equal obj.c3.serialize()
+        expect(refs['refs/heads/master'].sha1).to.equal obj.c3.serialize()
           .getHash()
-        expect(refs['tags/v0.0.1'].sha1).to.equal obj.tag.serialize()
+        expect(refs['refs/tags/v0.0.1'].sha1).to.equal obj.tag.serialize()
           .getHash()
         remaining--
         push.flush()
@@ -133,7 +133,7 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
           , 'ofs-delta'
         ]
         remaining--
-        push.create 'heads/master', obj.n2
+        push.create 'refs/heads/master', obj.n2
         push.flush()
 
       push.on 'pushed', (statusReport) ->
@@ -154,7 +154,7 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       push = remote.push()
 
       push.on 'discover', (refs) =>
-        refs['heads/master'].update obj.n2
+        refs['refs/heads/master'].update obj.n2
         push.flush()
 
       push.on 'pushed', (statusReport) ->
@@ -175,7 +175,7 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       push = remote.push()
 
       push.on 'discover', (refs) =>
-        push.create 'heads/topic', obj.n2
+        push.create 'refs/heads/topic', obj.n2
         push.flush()
 
       push.on 'pushed', (statusReport) ->
@@ -198,7 +198,7 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       push = remote.push()
 
       push.on 'discover', (refs) =>
-        push.create 'heads/some-branch', obj.c2
+        push.create 'refs/heads/some-branch', obj.c2
         push.flush()
 
       push.on 'pushed', (statusReport) ->
@@ -220,7 +220,7 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       push = remote.push()
 
       push.on 'discover', (refs) =>
-        refs['heads/master'].del()
+        refs['refs/heads/master'].del()
         push.flush()
 
       push.on 'pushed', (statusReport) ->
@@ -241,7 +241,7 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       push = remote.push()
 
       push.on 'discover', (refs) =>
-        refs['tags/v0.0.1'].del()
+        refs['refs/tags/v0.0.1'].del()
         push.flush()
 
       push.on 'pushed', (statusReport) ->
@@ -262,8 +262,8 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       push = remote.push()
 
       push.on 'discover', (refs) =>
-        refs['heads/some-branch'].del()
-        refs['heads/topic'].del()
+        refs['refs/heads/some-branch'].del()
+        refs['refs/heads/topic'].del()
         push.flush()
 
       push.on 'pushed', (statusReport) ->
@@ -285,9 +285,9 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
       push = remote.push()
 
       push.on 'discover', (refs) =>
-        push.create 'heads/topic1', obj.n1
-        push.create 'heads/topic2', obj.n2
-        refs['heads/master'].update new Commit {
+        push.create 'refs/heads/topic1', obj.n1
+        push.create 'refs/heads/topic2', obj.n2
+        refs['refs/heads/master'].update new Commit {
             tree: new Tree {
               'last-version.txt':
                 new Blob 'Single file in tree for new branch'
