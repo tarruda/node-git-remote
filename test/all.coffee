@@ -71,6 +71,7 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
 
       fetch.on 'fetched', (fetched) =>
         remaining--
+        expect(typeof fetched['refs/heads/master'].parents[0] == 'object')
         historyShouldEqual(fetched['refs/heads/master'], obj.c3)
 
       fetch.on 'end', ->
@@ -93,6 +94,7 @@ createSuite = (transport, remote, emptyRemote, obj, extraTeardown) ->
         remaining--
         expect(fetched['refs/heads/master'].serialize().getHash()).to.equal(
           obj.c3.serialize().getHash())
+        expect(typeof fetched['refs/heads/master'].parents[0] == 'string')
         treeShouldEqual(fetched['refs/heads/master'].tree, obj.c3.tree)
 
       fetch.on 'end', ->
